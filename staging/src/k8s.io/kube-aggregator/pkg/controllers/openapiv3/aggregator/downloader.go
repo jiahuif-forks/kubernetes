@@ -24,6 +24,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/klog/v2"
+	"k8s.io/kube-openapi/pkg/handler3"
 	"k8s.io/kube-openapi/pkg/spec3"
 )
 
@@ -41,11 +42,6 @@ func (s *Downloader) handlerWithUser(handler http.Handler, info user.Info) http.
 		req = req.WithContext(request.WithUser(req.Context(), info))
 		handler.ServeHTTP(w, req)
 	})
-}
-
-// gvList is a struct for the response of the /openapi/v3 endpoint to unmarshal into
-type gvList struct {
-	Paths []string `json:"Paths"`
 }
 
 // SpecETag is a OpenAPI v3 spec and etag pair for the endpoint of each OpenAPI group/version
@@ -75,14 +71,14 @@ func (s *Downloader) Download(handler http.Handler, etagList map[string]string) 
 		// Gracefully skip 404, assuming the server won't provide any spec
 		return nil, nil
 	case http.StatusOK:
-		groups := gvList{}
+		groups := handler3.OpenAPIV3Discovery{}
 		aggregated := make(map[string]*SpecETag)
 
 		if err := json.Unmarshal(writer.data, &groups); err != nil {
 			return nil, err
 		}
-		for _, path := range groups.Paths {
-			reqPath := fmt.Sprintf("/openapi/v3/%s", path)
+		for path, item := range groups.Paths {
+			reqPath := item.URL
 			req, err := http.NewRequest("GET", reqPath, nil)
 			if err != nil {
 				return nil, err

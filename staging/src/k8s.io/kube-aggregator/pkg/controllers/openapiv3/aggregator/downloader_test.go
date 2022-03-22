@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/kube-openapi/pkg/handler3"
 )
 
 type handlerTest struct {
@@ -34,10 +35,16 @@ var _ http.Handler = handlerTest{}
 
 func (h handlerTest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Create an APIService with a handler for one group/version
-	group := make(map[string][]string)
-	group["Paths"] = []string{"apis/group/version"}
-	j, _ := json.Marshal(group)
 	if r.URL.Path == "/openapi/v3" {
+		group := &handler3.OpenAPIV3Discovery{
+			Paths: map[string]handler3.OpenAPIV3DiscoveryGroupVersion{
+				"apis/group/version": {
+					URL: "/openapi/v3/apis/group/version?hash=" + h.etag,
+				},
+			},
+		}
+
+		j, _ := json.Marshal(group)
 		w.Write(j)
 		return
 	}
