@@ -18,4 +18,4 @@ limitations under the License.
 // A type is "native" if and only if the type comes built-in from the original
 // Kubernetes codebase. Types defined in CRDs are not native and thus not
 // covered by this package.
-package native
+package builtin
