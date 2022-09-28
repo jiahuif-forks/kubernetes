@@ -21,6 +21,7 @@ import (
 	"math"
 	"testing"
 
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
@@ -30,17 +31,17 @@ import (
 
 func BenchmarkPodSpecWithCEL(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		podSpecDef, err := LoadSchema(apiextensionsopenapi.GetOpenAPIDefinitions, "k8s.io/api/core/v1.PodSpec")
+		podSpecDef, err := LoadSchema(apiextensionsopenapi.GetOpenAPIDefinitions, "k8s.io/api/autoscaling/v1.ScaleSpec")
 		if err != nil {
 			b.Fatal(err)
 		}
 
 		structural, err := schema.NewStructural(podSpecDef)
-
 		if err != nil {
 			b.Fatal(err)
 		}
 
+		exampleScaleSpec := &autoscalingv1.ScaleSpec{}
 		structural.Extensions.XValidations = v1.ValidationRules{
 			v1.ValidationRule{Rule: "has(self.containers) && self.containers.size() > 0", Message: "containers must not be empty"},
 			v1.ValidationRule{Rule: "has(self.restartPolicy) && (self.restartPolicy == 'Always' || self.restartPolicy == 'OnFailure' || self.restartPolicy == 'Never')", Message: "restartPolicy"},
@@ -49,7 +50,7 @@ func BenchmarkPodSpecWithCEL(b *testing.B) {
 		v := cel.NewValidator(structural, true, math.MaxInt64)
 
 		for i := 0; i < b.N; i++ {
-			p := toUnstructured(examplePodSpec())
+			p := make(map[string]any)
 			errs, _ := v.Validate(context.Background(), field.NewPath("root"), structural, p, p, math.MaxInt64)
 			if len(errs) != 0 {
 				b.Errorf("unexpected errors: %v", errs)

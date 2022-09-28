@@ -31,7 +31,11 @@ func LoadSchema(GetOpenAPIDefinitions common.GetOpenAPIDefinitions, path string)
 	defs := GetOpenAPIDefinitions(func(path string) spec.Ref {
 		return spec.MustCreateRef(path)
 	})
-	s := defs[path].Schema
+	def, ok := defs[path]
+	if !ok {
+		return nil, fmt.Errorf("schema for %v not found", path)
+	}
+	s := def.Schema
 	err := resolveRefs(defs, &s)
 	if err != nil {
 		return nil, err
@@ -94,10 +98,10 @@ func toJSONSchemaProps(in any) (*apiextensions.JSONSchemaProps, error) {
 	return out, nil
 }
 
-func toUnstructured(whatever any) map[string]interface{} {
+func toUnstructured(whatever any) map[string]any {
 	b := new(bytes.Buffer)
 	_ = json.NewEncoder(b).Encode(whatever)
-	res := make(map[string]interface{})
+	res := make(map[string]any)
 	_ = json.NewDecoder(b).Decode(&res)
 	return res
 }
