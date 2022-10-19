@@ -33,7 +33,11 @@ type Validator interface {
 
 // Compiler takes a CEL validation rule and its associated types
 type Compiler interface {
-	Compile(rules []ValidationRule, declType *DeclType, options *CompileOptions) error
+	Compile(rules []ValidationRule, declType *DeclType, options *CompileOptions) (Validator, error)
+}
+
+type CostEstimator interface {
+	Cost() int64
 }
 
 type Converter interface {
@@ -41,17 +45,25 @@ type Converter interface {
 	Val(object runtime.Object) (*ref.Val, error)
 }
 
-// ValidationRule is a validation that evaluates a CEL expression
-// and, when
+// ValidationRule is a validation that evaluates a CEL expression against
+// a resource, with the message to report when the validation fails.
 type ValidationRule interface {
+	// Rule is the CEL expression to evaluate.
 	Rule() string
+	// Message is a CEL expression that constructs a message when the validation
+	// fails.
 	Message() string
 }
 
 type ValidationOptions struct {
+	// CostBudget is the overall cost budget for runtime CEL validation cost
+	// per resource.
+	// leave empty to use the default value.
 	CostBudge int64
 }
 
 type CompileOptions struct {
+	// PerCallLimit specify the actual cost limit per CEL validation call.
+	// leave empty to use the default value.
 	PerCallLimit int64
 }
