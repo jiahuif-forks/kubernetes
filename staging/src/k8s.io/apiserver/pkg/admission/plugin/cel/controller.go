@@ -31,9 +31,13 @@ import (
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/admission/plugin/cel/internal/generic"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
+
+var _ CELPolicyEvaluator = &celAdmissionController{}
 
 // celAdmissionController is the top-level controller for admission control using CEL
 // it is responsible for watching policy definitions, bindings, and config param CRDs
@@ -46,11 +50,11 @@ type celAdmissionController struct {
 
 	// dynamicclient used to create informers to watch the param crd types
 	dynamicClient dynamic.Interface
-	restMapper    meta.RESTMapper
+	restMapper    meta.RESTMapper // WantsRESTMapper
 
 	// Provided to the policy's Compile function as an injected dependency to
 	// assist with compiling its expressions to CEL
-	objectConverter ValidatorCompiler
+	validatorCompiler ValidatorCompiler
 
 	// Lock which protects:
 	//	- definitionInfo
@@ -76,6 +80,14 @@ type celAdmissionController struct {
 	// All keys must have at least one dependent binding
 	// All binding names MUST exist as a key bindingInfos
 	definitionsToBindings map[string]sets.String
+}
+
+func (c *celAdmissionController) SetExternalKubeInformerFactory(factory informers.SharedInformerFactory) {
+	c.validatorCompiler.SetExternalKubeInformerFactory(factory)
+}
+
+func (c *celAdmissionController) SetExternalKubeClientSet(k kubernetes.Interface) {
+	c.validatorCompiler.SetExternalKubeClientSet(k)
 }
 
 type definitionInfo struct {
@@ -115,7 +127,7 @@ func NewAdmissionController(
 	policyBindingInformer cache.SharedIndexInformer,
 
 	// Injected Dependencies
-	objectConverter ValidatorCompiler,
+	validatorCompiler ValidatorCompiler,
 	restMapper meta.RESTMapper,
 	dynamicClient dynamic.Interface,
 ) CELPolicyEvaluator {
@@ -125,7 +137,7 @@ func NewAdmissionController(
 		paramsCRDControllers:  make(map[v1alpha1.ParamKind]*paramInfo),
 		definitionsToBindings: make(map[string]sets.String),
 		dynamicClient:         dynamicClient,
-		objectConverter:       objectConverter,
+		validatorCompiler:     validatorCompiler,
 		restMapper:            restMapper,
 	}
 
@@ -190,14 +202,14 @@ func (c *celAdmissionController) Validate(
 	var allDecisions []PolicyDecisionWithMetadata = nil
 
 	addConfigError := func(err error, definition *v1alpha1.ValidatingAdmissionPolicy, binding *v1alpha1.ValidatingAdmissionPolicyBinding) {
-		wrappedError := fmt.Errorf("configuration error: %w", err)
+		wrappedError := fmt.Errorf("policy failed with error: %w", err)
 
-		// What is default?
 		policy := v1alpha1.Fail
 		if definition.Spec.FailurePolicy != nil {
 			policy = *definition.Spec.FailurePolicy
 		}
 
+		// apply FailurePolicy specified in ValidatingAdmissionPolicy, the default would be Fail
 		switch policy {
 		case v1alpha1.Ignore:
 			klog.Info(wrappedError)
@@ -217,7 +229,11 @@ func (c *celAdmissionController) Validate(
 	}
 	for definitionNamespacedName, definitionInfo := range c.definitionInfo {
 		definition := definitionInfo.lastReconciledValue
-		if !c.objectConverter.DefinitionMatches(definition, a) {
+		matches, err := c.validatorCompiler.DefinitionMatches(definition, a, o)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			// Policy definition does not match request
 			continue
 		} else if definitionInfo.configurationError != nil {
@@ -238,29 +254,33 @@ func (c *celAdmissionController) Validate(
 			// be a bindingInfo for it
 			bindingInfo := c.bindingInfos[namespacedBindingName]
 			binding := bindingInfo.lastReconciledValue
-			if !c.objectConverter.BindingMatches(binding, a) {
+			matches, err := c.validatorCompiler.BindingMatches(binding, a, o)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				continue
 			}
 
 			var param *unstructured.Unstructured
 
-			// If definition has no paramsource, always provide nil params to
+			// If definition has no paramKind, always provide nil params to
 			// evaluator. If binding specifies a params to use they are ignored.
 			// Done this way so you can configure params before definition is ready.
-			if paramSource := definition.Spec.ParamKind; paramSource != nil {
+			if paramKind := definition.Spec.ParamKind; paramKind != nil {
 				paramRef := binding.Spec.ParamRef
 				if paramRef == nil {
-					addConfigError(fmt.Errorf("paramSource kind `%v` not specified despite being required by policy definition",
-						paramSource.String()), definition, binding)
+					addConfigError(fmt.Errorf("paramRef is missing but required since policyName refers to a ValidatingAdmissionPolicy containing a paramKind: `%v`",
+						paramKind.String()), definition, binding)
 					continue
 				}
 
 				// Find the params referred by the binding by looking its name up
 				// in our informer for its CRD
-				paramInfo, ok := c.paramsCRDControllers[*paramSource]
+				paramInfo, ok := c.paramsCRDControllers[*paramKind]
 				if !ok {
-					addConfigError(fmt.Errorf("paramSource kind `%v` not known",
-						paramSource.String()), definition, binding)
+					addConfigError(fmt.Errorf("paramKind kind `%v` not known",
+						paramKind.String()), definition, binding)
 					continue
 				}
 
@@ -288,7 +308,7 @@ func (c *celAdmissionController) Validate(
 
 			if bindingInfo.validator == nil {
 				// Compile policy definition using binding
-				bindingInfo.validator, err = c.objectConverter.Compile(definition, c.restMapper)
+				bindingInfo.validator, err = c.validatorCompiler.Compile(definition)
 				if err != nil {
 					// compilation error. Apply failure policy
 					wrappedError := fmt.Errorf("failed to compile CEL expression: %w", err)
@@ -298,7 +318,7 @@ func (c *celAdmissionController) Validate(
 				c.bindingInfos[namespacedBindingName] = bindingInfo
 			}
 
-			decisions, err := bindingInfo.validator.Validate(a, param)
+			decisions, err := bindingInfo.validator.Validate(a, o, param)
 			if err != nil {
 				// runtime error. Apply failure policy
 				wrappedError := fmt.Errorf("failed to evaluate CEL expression: %w", err)
@@ -335,4 +355,8 @@ func (c *celAdmissionController) Validate(
 func (c *celAdmissionController) HasSynced() bool {
 	return c.policyBindingController.HasSynced() &&
 		c.policyDefinitionsController.HasSynced()
+}
+
+func (c *celAdmissionController) ValidateInitialization() error {
+	return c.validatorCompiler.ValidateInitialization()
 }

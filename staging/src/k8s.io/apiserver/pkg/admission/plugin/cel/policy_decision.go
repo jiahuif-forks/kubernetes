@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"k8s.io/api/admissionregistration/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type PolicyDecisionKind string
@@ -31,8 +32,9 @@ const (
 )
 
 type PolicyDecision struct {
-	Kind    PolicyDecisionKind `json:"kind"`
-	Message any                `json:"message"`
+	Kind    PolicyDecisionKind  `json:"kind"`
+	Message any                 `json:"message"`
+	Reason  metav1.StatusReason `json:"reason"`
 }
 
 type PolicyDecisionWithMetadata struct {
