@@ -20,32 +20,35 @@ import (
 	"context"
 
 	admissionregistrationv1alpha1 "k8s.io/api/admissionregistration/v1alpha1"
-	pluginvalidatingadmissionpolicy "k8s.io/apiserver/pkg/admission/plugin/validatingadmissionpolicy"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/kubernetes/scheme"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/controller-manager/controller"
 	"k8s.io/kubernetes/pkg/controller/validatingadmissionpolicystatus"
-	"k8s.io/kubernetes/pkg/generated/openapi"
 )
 
 var validatingAdmissionPolicyResource = admissionregistrationv1alpha1.SchemeGroupVersion.WithResource("validatingadmissionpolicies")
 
 func startValidatingAdmissionPolicyStatusController(ctx context.Context, controllerContext ControllerContext) (controller.Interface, bool, error) {
+	const registeredControllerName = "validatingadmissionpolicy-status-controller"
 	// intended check against served resource but not feature gate.
 	// KCM won't start the controller without the feature gate set.
 	if !controllerContext.AvailableResources[validatingAdmissionPolicyResource] {
 		return nil, false, nil
 	}
-	typeChecker := &pluginvalidatingadmissionpolicy.TypeChecker{
-		SchemaResolver: resolver.NewDefinitionsSchemaResolver(scheme.Scheme, openapi.GetOpenAPIDefinitions),
-		RestMapper:     controllerContext.RESTMapper,
+	config := controllerContext.ClientBuilder.ConfigOrDie(registeredControllerName)
+	extensionsClient, err := apiextensions.NewForConfig(config)
+	if err != nil {
+		return nil, false, err
 	}
 	c, err := validatingadmissionpolicystatus.NewController(
 		controllerContext.InformerFactory.Admissionregistration().V1alpha1().ValidatingAdmissionPolicies(),
-		controllerContext.ClientBuilder.ClientOrDie("validatingadmissionpolicy-status-controller").AdmissionregistrationV1alpha1().ValidatingAdmissionPolicies(),
-		typeChecker,
+		controllerContext.ClientBuilder.ClientOrDie(registeredControllerName).AdmissionregistrationV1alpha1().ValidatingAdmissionPolicies(),
+		controllerContext.APIExtensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
+		extensionsClient.ApiextensionsV1().CustomResourceDefinitions(),
+		controllerContext.RESTMapper,
 	)
-
+	if err != nil {
+		return nil, false, err
+	}
 	go c.Run(ctx, int(controllerContext.ComponentConfig.ValidatingAdmissionPolicyStatusController.ConcurrentPolicySyncs))
 	return nil, true, err
 }

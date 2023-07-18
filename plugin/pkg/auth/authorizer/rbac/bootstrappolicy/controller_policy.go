@@ -450,6 +450,8 @@ func buildControllerRoles() ([]rbacv1.ClusterRole, []rbacv1.ClusterRoleBinding) 
 					Resources("validatingadmissionpolicies").RuleOrDie(),
 				rbacv1helpers.NewRule("get", "patch", "update").Groups(admissionRegistrationGroup).
 					Resources("validatingadmissionpolicies/status").RuleOrDie(),
+				rbacv1helpers.NewRule("get", "list", "watch").Groups(apiExtensionsGroup).
+					Resources("customresourcedefinitions").RuleOrDie(),
 				eventsRule(),
 			},
 		})

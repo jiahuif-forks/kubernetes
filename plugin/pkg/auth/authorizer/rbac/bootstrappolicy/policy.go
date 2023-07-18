@@ -63,6 +63,7 @@ const (
 	eventsGroup                = "events.k8s.io"
 	internalAPIServerGroup     = "internal.apiserver.k8s.io"
 	admissionRegistrationGroup = "admissionregistration.k8s.io"
+	apiExtensionsGroup         = "apiextensions.k8s.io"
 )
 
 func addDefaultMetadata(obj runtime.Object) {

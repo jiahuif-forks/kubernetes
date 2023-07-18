@@ -24,21 +24,25 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	admissionregistrationv1alpha1 "k8s.io/api/admissionregistration/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
+	"k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/admission/plugin/validatingadmissionpolicy"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/kubernetes/pkg/generated/openapi"
 )
 
 func TestTypeChecking(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		policy         *admissionregistrationv1alpha1.ValidatingAdmissionPolicy
+		crd            *apiextensionsv1.CustomResourceDefinition
 		assertFieldRef func(warnings []admissionregistrationv1alpha1.ExpressionWarning, t *testing.T) // warning.fieldRef
 		assertWarnings func(warnings []admissionregistrationv1alpha1.ExpressionWarning, t *testing.T) // warning.warning
 	}{
@@ -94,6 +98,28 @@ func TestTypeChecking(t *testing.T) {
 			assertFieldRef: toBe("spec.validations[1].expression"),
 			assertWarnings: toHaveMultipleSubstrings([]string{"undefined field 'nonExisting'", `found no matching overload for '_>_' applied to '(int, string)'`}),
 		},
+		{
+			name: "crd valid",
+			crd:  crontabExampleCRD(),
+			policy: withGVRMatch([]string{"stable.example.com"}, []string{"v1"}, []string{"crontabs"}, withValidations([]admissionregistrationv1alpha1.Validation{
+				{
+					Expression: "object.spec.replicas > 1",
+				},
+			}, makePolicy("replicated-crontab"))),
+			assertFieldRef: toHaveLengthOf(0),
+			assertWarnings: toHaveLengthOf(0),
+		},
+		{
+			name: "crd confused",
+			crd:  crontabExampleCRD(),
+			policy: withGVRMatch([]string{"stable.example.com"}, []string{"v1"}, []string{"crontabs"}, withValidations([]admissionregistrationv1alpha1.Validation{
+				{
+					Expression: "object.spec.replicas > '1'",
+				},
+			}, makePolicy("confused-crontab"))),
+			assertFieldRef: toBe("spec.validations[0].expression"),
+			assertWarnings: toHaveSubstring(`found no matching overload for '_>_' applied to '(int, string)'`),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -101,20 +127,43 @@ func TestTypeChecking(t *testing.T) {
 			policy := tc.policy.DeepCopy()
 			policy.ObjectMeta.Generation = 1 // fake storage does not do this automatically
 			client := fake.NewSimpleClientset(policy)
+			var crds []runtime.Object
+			if tc.crd != nil {
+				crds = append(crds, tc.crd)
+			}
+			crdClient := apiextensionsfake.NewSimpleClientset(crds...)
 			informerFactory := informers.NewSharedInformerFactory(client, 0)
-			typeChecker := &validatingadmissionpolicy.TypeChecker{
-				SchemaResolver: resolver.NewDefinitionsSchemaResolver(scheme.Scheme, openapi.GetOpenAPIDefinitions),
-				RestMapper:     testrestmapper.TestOnlyStaticRESTMapper(scheme.Scheme),
+			crdInformerFactory := externalversions.NewSharedInformerFactory(crdClient, 0)
+			// manually set up rest mapper to make it aware of the CRD
+			tweakableRM := meta.NewDefaultRESTMapper(nil)
+			restMapper := meta.MultiRESTMapper{tweakableRM, testrestmapper.TestOnlyStaticRESTMapper(scheme.Scheme)}
+			if tc.crd != nil {
+				tweakableRM.AddSpecific(schema.GroupVersionKind{
+					Group:   tc.crd.Spec.Group,
+					Version: "v1",
+					Kind:    tc.crd.Spec.Names.Kind,
+				}, schema.GroupVersionResource{
+					Group:    tc.crd.Spec.Group,
+					Version:  "v1",
+					Resource: tc.crd.Spec.Names.Plural,
+				}, schema.GroupVersionResource{
+					Group:    tc.crd.Spec.Group,
+					Version:  "v1",
+					Resource: tc.crd.Spec.Names.Singular,
+				}, meta.RESTScopeNamespace)
 			}
 			controller, err := NewController(
 				informerFactory.Admissionregistration().V1alpha1().ValidatingAdmissionPolicies(),
 				client.AdmissionregistrationV1alpha1().ValidatingAdmissionPolicies(),
-				typeChecker,
+				crdInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
+				crdClient.ApiextensionsV1().CustomResourceDefinitions(),
+				restMapper,
 			)
 			if err != nil {
 				t.Fatalf("cannot create controller: %v", err)
 			}
 			go informerFactory.Start(ctx.Done())
+			go crdInformerFactory.Start(ctx.Done())
 			go controller.Run(ctx, 1)
 			err = wait.PollUntilContextCancel(ctx, time.Second, false, func(ctx context.Context) (done bool, err error) {
 				name := policy.Name
@@ -220,5 +269,50 @@ func withValidations(validations []admissionregistrationv1alpha1.Validation, pol
 func makePolicy(name string) *admissionregistrationv1alpha1.ValidatingAdmissionPolicy {
 	return &admissionregistrationv1alpha1.ValidatingAdmissionPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+}
+
+func crontabExampleCRD() *apiextensionsv1.CustomResourceDefinition {
+	return &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "crontabs.stable.example.com",
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "stable.example.com",
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    "v1",
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]apiextensionsv1.JSONSchemaProps{
+								"spec": {
+									Type: "object",
+									Properties: map[string]apiextensionsv1.JSONSchemaProps{
+										"cronSpec": {
+											Type: "string",
+										},
+										"image": {
+											Type: "string",
+										},
+										"replicas": {
+											Type: "integer",
+										},
+									},
+								},
+							},
+						}},
+				},
+			},
+			Scope: apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Plural:     "crontabs",
+				Singular:   "crontab",
+				Kind:       "CronTab",
+				ShortNames: []string{"ct"},
+			},
+		},
 	}
 }
