@@ -29,6 +29,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -242,6 +244,7 @@ func Run(ctx context.Context, c *config.CompletedConfig) error {
 		}
 
 		controllerContext.InformerFactory.Start(stopCh)
+		controllerContext.APIExtensionsInformerFactory.Start(stopCh)
 		controllerContext.ObjectOrMetadataInformerFactory.Start(stopCh)
 		close(controllerContext.InformersStarted)
 
@@ -340,6 +343,9 @@ type ControllerContext struct {
 
 	// InformerFactory gives access to informers for the controller.
 	InformerFactory informers.SharedInformerFactory
+
+	// APIExtensionsInformerFactory gives access to api-extensions informers for the controller.
+	APIExtensionsInformerFactory apiextensionsinformers.SharedInformerFactory
 
 	// ObjectOrMetadataInformerFactory gives access to informers for typed resources
 	// and dynamic resources by their metadata. All generic controllers currently use
@@ -530,6 +536,9 @@ func CreateControllerContext(logger klog.Logger, s *config.CompletedConfig, root
 	metadataClient := metadata.NewForConfigOrDie(rootClientBuilder.ConfigOrDie("metadata-informers"))
 	metadataInformers := metadatainformer.NewSharedInformerFactory(metadataClient, ResyncPeriod(s)())
 
+	apiExtensionsClient := apiextensionsclientset.NewForConfigOrDie(rootClientBuilder.ConfigOrDie("apiextensions-informers"))
+	apiExtensionsInformers := apiextensionsinformers.NewSharedInformerFactory(apiExtensionsClient, ResyncPeriod(s)())
+
 	// If apiserver is not running we should wait for some time and fail only then. This is particularly
 	// important when we start apiserver and controller manager at the same time.
 	if err := genericcontrollermanager.WaitForAPIServer(versionedClient, 10*time.Second); err != nil {
@@ -558,6 +567,7 @@ func CreateControllerContext(logger klog.Logger, s *config.CompletedConfig, root
 	ctx := ControllerContext{
 		ClientBuilder:                   clientBuilder,
 		InformerFactory:                 sharedInformers,
+		APIExtensionsInformerFactory:    apiExtensionsInformers,
 		ObjectOrMetadataInformerFactory: informerfactory.NewInformerFactory(sharedInformers, metadataInformers),
 		ComponentConfig:                 s.ComponentConfig,
 		RESTMapper:                      restMapper,
