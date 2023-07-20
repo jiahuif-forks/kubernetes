@@ -19,18 +19,22 @@ package validatingadmissionpolicystatus
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"k8s.io/apiextensions-apiserver/pkg/apihelpers"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiextensionslisterv1 "k8s.io/apiextensions-apiserver/pkg/client/listers/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/cache"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
+
+const schemaCacheSize = 1024
+const schemaCacheTTL = time.Hour * 24
 
 type crdTracker struct {
 	// affectedPolicies is the (CRD GroupResources) -> (affected policy names) mapping
@@ -38,12 +42,16 @@ type crdTracker struct {
 	// policyDependencies is the (policy name) -> (required CRD GroupResource) mapping.
 	// It is the reverse of affectedPolicies.
 	policyDependencies map[string]sets.Set[schema.GroupResource]
+	// schemaCache is the LRU cache with CRD name as key and a schemaMap as value
+	schemaCache *cache.LRUExpireCache
 
 	// mu protects affectedPolicies and policyDependencies
 	mu sync.RWMutex
 
 	parent *Controller
 }
+
+type schemaMap map[schema.GroupVersionKind]*spec.Schema
 
 // convertCRDValidationToSchema converts the openAPIV3Schema to a kube-openapi schema.
 // In case of nil validation or missing OpenAPIV3Schema, this function returns ErrSchemaNotFound.
@@ -73,6 +81,7 @@ func newCRDTracker(controller *Controller) *crdTracker {
 	return &crdTracker{
 		affectedPolicies:   make(map[schema.GroupResource]sets.Set[string]),
 		policyDependencies: make(map[string]sets.Set[schema.GroupResource]),
+		schemaCache:        cache.NewLRUExpireCache(schemaCacheSize),
 		parent:             controller,
 	}
 }
@@ -83,6 +92,7 @@ func (t *crdTracker) handleCRDChange(crd *apiextensionsv1.CustomResourceDefiniti
 	if !apihelpers.IsCRDConditionTrue(crd, apiextensionsv1.Established) {
 		return
 	}
+	t.schemaCache.Remove(crd.Name)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	gr := schema.GroupResource{
@@ -153,6 +163,43 @@ func (t *crdTracker) updateDependenciesForPolicyDeletion(policyName string) {
 	}
 }
 
+func (t *crdTracker) handleCRDDeletion(name string) {
+	t.schemaCache.Remove(name)
+}
+
+func (t *crdTracker) schemaMapFor(crdName string) (schemaMap, error) {
+	m, ok := t.schemaCache.Get(crdName)
+	if !ok {
+		crd, err := t.parent.crdInformer.Lister().Get(crdName)
+		if err != nil {
+			return nil, err
+		}
+		if err != nil {
+			if kerrors.IsNotFound(err) {
+				// also keep negative cache
+				t.schemaCache.Add(crdName, nil, schemaCacheTTL)
+				return nil, nil
+			}
+			return nil, err
+		}
+		newMap := make(schemaMap)
+		for _, v := range crd.Spec.Versions {
+			gvk := CRDVersionToGVK(crd, &v)
+			s, err := convertCRDValidationToSchema(v.Schema)
+			if err != nil {
+				return nil, err
+			}
+			newMap[gvk] = s
+		}
+		m = newMap
+		t.schemaCache.Add(crdName, m, schemaCacheTTL)
+	}
+	if m == nil {
+		return nil, nil
+	}
+	return m.(schemaMap), nil
+}
+
 func CRDVersionToGVK(crd *apiextensionsv1.CustomResourceDefinition, crdVersion *apiextensionsv1.CustomResourceDefinitionVersion) schema.GroupVersionKind {
 	gvk := schema.GroupVersionKind{
 		Group:   crd.Spec.Group,
@@ -165,25 +212,34 @@ func CRDVersionToGVK(crd *apiextensionsv1.CustomResourceDefinition, crdVersion *
 type cachedTypeResolver struct {
 	meta.RESTMapper
 	resolver.SchemaResolver
-	crdLister apiextensionslisterv1.CustomResourceDefinitionLister
 
-	cachedCRD    map[schema.GroupResource]*apiextensionsv1.CustomResourceDefinition
-	cachedSchema map[schema.GroupVersionKind]*spec.Schema
+	crdTracker             *crdTracker
+	gvksToCRDName          map[schema.GroupVersionKind]string
+	observedGroupResources sets.Set[schema.GroupResource]
 }
 
-func newCachedTypeResolver(restMapper meta.RESTMapper, resolver resolver.SchemaResolver, crdLister apiextensionslisterv1.CustomResourceDefinitionLister) *cachedTypeResolver {
+func newCachedTypeResolver(restMapper meta.RESTMapper, resolver resolver.SchemaResolver, crdTracker *crdTracker) *cachedTypeResolver {
 	return &cachedTypeResolver{
-		RESTMapper:     restMapper,
-		SchemaResolver: resolver,
-		crdLister:      crdLister,
-		cachedCRD:      map[schema.GroupResource]*apiextensionsv1.CustomResourceDefinition{},
-		cachedSchema:   map[schema.GroupVersionKind]*spec.Schema{},
+		RESTMapper:             restMapper,
+		SchemaResolver:         resolver,
+		crdTracker:             crdTracker,
+		gvksToCRDName:          make(map[schema.GroupVersionKind]string),
+		observedGroupResources: sets.New[schema.GroupResource](),
 	}
 }
 
 func (r *cachedTypeResolver) ResolveSchema(gvk schema.GroupVersionKind) (*spec.Schema, error) {
-	if s, ok := r.cachedSchema[gvk]; ok {
-		return s, nil
+	if crdName, ok := r.gvksToCRDName[gvk]; ok {
+		schemas, err := r.crdTracker.schemaMapFor(crdName)
+		if err != nil {
+			return nil, err
+		}
+		if schemas == nil {
+			return nil, resolver.ErrSchemaNotFound
+		}
+		if s, ok := schemas[gvk]; ok {
+			return s, nil
+		}
 	}
 	return r.SchemaResolver.ResolveSchema(gvk)
 }
@@ -192,50 +248,26 @@ func (r *cachedTypeResolver) KindsFor(resource schema.GroupVersionResource) ([]s
 	if isGroupBuiltin(resource.Group) {
 		return r.RESTMapper.KindsFor(resource)
 	}
-
-	crd, ok := r.cachedCRD[resource.GroupResource()]
-	if !ok {
-		var err error
-		// Assuming resource.Resource is plural.
-		// There does not seem to be a good way to reliably to convert the name without the CRD itself
-		crdName := resource.Resource + "." + resource.Group
-		crd, err = r.crdLister.Get(crdName)
-		if err != nil {
-			if kerrors.IsNotFound(err) {
-				// also keep negative cache
-				r.cachedCRD[resource.GroupResource()] = nil
-				return nil, nil
-			}
-			return nil, err
-		}
-		r.cachedCRD[resource.GroupResource()] = crd
-
-		for _, v := range crd.Spec.Versions {
-			gvk := CRDVersionToGVK(crd, &v)
-			s, err := convertCRDValidationToSchema(v.Schema)
-			if err != nil {
-				return nil, err
-			}
-			r.cachedSchema[gvk] = s
-		}
+	// Assuming resource.Resource is plural.
+	// There does not seem to be a good way to reliably to convert the name without the CRD itself
+	crdName := resource.Resource + "." + resource.Group
+	schemas, err := r.crdTracker.schemaMapFor(crdName)
+	if err != nil {
+		return nil, err
 	}
-
 	var gvks []schema.GroupVersionKind
-	for _, v := range crd.Spec.Versions {
-		gvk := CRDVersionToGVK(crd, &v)
-		if v.Name == gvk.Version {
+	for gvk := range schemas {
+		if gvk.Version == resource.Version {
 			gvks = append(gvks, gvk)
+			r.gvksToCRDName[gvk] = crdName
 		}
 	}
+	r.observedGroupResources.Insert(resource.GroupResource())
 	return gvks, nil
 }
 
 func (r *cachedTypeResolver) ReferredGroupResources() []schema.GroupResource {
-	grs := make([]schema.GroupResource, 0, len(r.cachedCRD))
-	for gr := range r.cachedCRD {
-		grs = append(grs, gr)
-	}
-	return grs
+	return r.observedGroupResources.UnsortedList()
 }
 
 // isGroupBuiltin checks whether a GVR/GVK is a built-in type by looking at its Group.

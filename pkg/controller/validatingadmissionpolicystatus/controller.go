@@ -132,6 +132,11 @@ func NewController(policyInformer informerv1alpha1.ValidatingAdmissionPolicyInfo
 				c.crdTracker.handleCRDChange(crd)
 			}
 		},
+		DeleteFunc: func(obj interface{}) {
+			if crdName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err == nil {
+				c.crdTracker.handleCRDDeletion(crdName)
+			}
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -182,7 +187,7 @@ func (c *Controller) reconcile(ctx context.Context, key any) error {
 	if policy.Generation < policy.Status.ObservedGeneration {
 		return nil
 	}
-	cachedCRDResolver := newCachedTypeResolver(c.restMapper, c.compiledInSchemaResolver, c.crdInformer.Lister())
+	cachedCRDResolver := newCachedTypeResolver(c.restMapper, c.compiledInSchemaResolver, c.crdTracker)
 	// cachedCRDResolver locally resolves GVKs and schemas and act as both the SchemaResolver and RestMapper
 	typeChecker := &validatingadmissionpolicy.TypeChecker{
 		SchemaResolver: cachedCRDResolver,
