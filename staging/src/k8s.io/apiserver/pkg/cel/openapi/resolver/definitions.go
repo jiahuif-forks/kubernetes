@@ -62,7 +62,7 @@ func (d *DefinitionsSchemaResolver) ResolveSchema(gvk schema.GroupVersionKind) (
 	if !ok {
 		return nil, fmt.Errorf("cannot resolve %v: %w", gvk, ErrSchemaNotFound)
 	}
-	s, err := populateRefs(func(ref string) (*spec.Schema, bool) {
+	s, err := PopulateRefs(func(ref string) (*spec.Schema, bool) {
 		// find the schema by the ref string, and return a deep copy
 		def, ok := d.defs[ref]
 		if !ok {

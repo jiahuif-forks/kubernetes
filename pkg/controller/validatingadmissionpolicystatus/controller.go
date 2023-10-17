@@ -119,7 +119,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 		policy, err := c.policyInformer.Lister().Get(key)
 		if err != nil {
 			if kerrors.IsNotFound(err) {
-				// If not found, the policy is being deleting, do nothing.
+				// If not found, the policy is being deleted, do nothing.
 				return nil
 			}
 			return err
