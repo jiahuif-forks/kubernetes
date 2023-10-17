@@ -414,6 +414,7 @@ func TestAddFlags(t *testing.T) {
 		ValidatingAdmissionPolicyStatusController: &ValidatingAdmissionPolicyStatusControllerOptions{
 			&validatingadmissionpolicystatusconfig.ValidatingAdmissionPolicyStatusControllerConfiguration{
 				ConcurrentPolicySyncs: 9,
+				SchemaPollInterval:    metav1.Duration{Duration: 10 * time.Second},
 			},
 		},
 		SecureServing: (&apiserveroptions.SecureServingOptions{
@@ -649,6 +650,7 @@ func TestApplyTo(t *testing.T) {
 			},
 			ValidatingAdmissionPolicyStatusController: validatingadmissionpolicystatusconfig.ValidatingAdmissionPolicyStatusControllerConfiguration{
 				ConcurrentPolicySyncs: 9,
+				SchemaPollInterval:    metav1.Duration{Duration: 10 * time.Second},
 			},
 		},
 	}

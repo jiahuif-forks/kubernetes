@@ -22,11 +22,11 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
-// populateRefs recursively replaces Refs in the schema with the referred one.
+// PopulateRefs recursively replaces Refs in the schema with the referred one.
 // schemaOf is the callback to find the corresponding schema by the ref.
 // This function will not mutate the original schema. If the schema needs to be
 // mutated, a copy will be returned, otherwise it returns the original schema.
-func populateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.Schema) (*spec.Schema, error) {
+func PopulateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.Schema) (*spec.Schema, error) {
 	result := *schema
 	changed := false
 
@@ -44,7 +44,7 @@ func populateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.S
 	props := make(map[string]spec.Schema, len(schema.Properties))
 	propsChanged := false
 	for name, prop := range result.Properties {
-		populated, err := populateRefs(schemaOf, &prop)
+		populated, err := PopulateRefs(schemaOf, &prop)
 		if err != nil {
 			return nil, err
 		}
@@ -58,7 +58,7 @@ func populateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.S
 		result.Properties = props
 	}
 	if result.AdditionalProperties != nil && result.AdditionalProperties.Schema != nil {
-		populated, err := populateRefs(schemaOf, result.AdditionalProperties.Schema)
+		populated, err := PopulateRefs(schemaOf, result.AdditionalProperties.Schema)
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +69,7 @@ func populateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.S
 	}
 	// schema is a list, populate its items
 	if result.Items != nil && result.Items.Schema != nil {
-		populated, err := populateRefs(schemaOf, result.Items.Schema)
+		populated, err := PopulateRefs(schemaOf, result.Items.Schema)
 		if err != nil {
 			return nil, err
 		}

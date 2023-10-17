@@ -16,6 +16,10 @@ limitations under the License.
 
 package config
 
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
 // ValidatingAdmissionPolicyStatusControllerConfiguration contains elements describing ValidatingAdmissionPolicyStatusController.
 type ValidatingAdmissionPolicyStatusControllerConfiguration struct {
 	// ConcurrentPolicySyncs is the number of policy objects that are
@@ -23,4 +27,11 @@ type ValidatingAdmissionPolicyStatusControllerConfiguration struct {
 	// but more CPU (and network) load.
 	// The default value is 5.
 	ConcurrentPolicySyncs int32
+
+	// SchemaPollInterval is the interval between two polls from the
+	// OpenAPI v3 discovery interface.
+	// Short interval causes quicker response to schema changes
+	// like an update to CRD but more CPU (and network) load.
+	// The default value is 5 seconds.
+	SchemaPollInterval metav1.Duration
 }

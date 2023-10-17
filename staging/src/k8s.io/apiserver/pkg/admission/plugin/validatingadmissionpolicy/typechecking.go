@@ -57,6 +57,21 @@ type TypeCheckingContext struct {
 	paramDeclType *apiservercel.DeclType
 }
 
+// GVKs returns all GVKs that the policy refers to, including these in ResourceConstraints and that of the param
+// resource.
+func (c *TypeCheckingContext) GVKs() []schema.GroupVersionKind {
+	totalGVKs := len(c.gvks)
+	if c.paramDeclType != nil {
+		totalGVKs += 1
+	}
+	gvks := make([]schema.GroupVersionKind, 0, totalGVKs)
+	gvks = append(gvks, c.gvks...)
+	if c.paramDeclType != nil {
+		gvks = append(gvks, c.paramGVK)
+	}
+	return gvks
+}
+
 type typeOverwrite struct {
 	object *apiservercel.DeclType
 	params *apiservercel.DeclType
@@ -104,7 +119,13 @@ func (r *TypeCheckingResult) String() string {
 // The policy object is NOT mutated. The caller should update Status accordingly
 func (c *TypeChecker) Check(policy *v1beta1.ValidatingAdmissionPolicy) []v1beta1.ExpressionWarning {
 	ctx := c.CreateContext(policy)
+	return c.CheckWithContext(ctx, policy)
+}
 
+// CheckWithContext preforms the type check against the given policy with an already-created context.
+// The result is a []ExpressionWarning that is ready to be set in policy.Status
+// The result is nil if type checking returns no warning.
+func (c *TypeChecker) CheckWithContext(ctx *TypeCheckingContext, policy *v1beta1.ValidatingAdmissionPolicy) []v1beta1.ExpressionWarning {
 	// warnings to return, note that the capacity is optimistically set to zero
 	var warnings []v1beta1.ExpressionWarning // intentionally not setting capacity
 
