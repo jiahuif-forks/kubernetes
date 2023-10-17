@@ -19,25 +19,29 @@ package app
 import (
 	"context"
 
-	pluginvalidatingadmissionpolicy "k8s.io/apiserver/pkg/admission/plugin/validatingadmissionpolicy"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/kubernetes/scheme"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/controller-manager/controller"
 	"k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	"k8s.io/kubernetes/pkg/controller/validatingadmissionpolicystatus"
-	"k8s.io/kubernetes/pkg/generated/openapi"
+	"k8s.io/kubernetes/pkg/controller/validatingadmissionpolicystatus/schemawatcher"
 )
 
 func startValidatingAdmissionPolicyStatusController(ctx context.Context, controllerContext ControllerContext) (controller.Interface, bool, error) {
 	// KCM won't start the controller without the feature gate set.
-	typeChecker := &pluginvalidatingadmissionpolicy.TypeChecker{
-		SchemaResolver: resolver.NewDefinitionsSchemaResolver(scheme.Scheme, openapi.GetOpenAPIDefinitions),
-		RestMapper:     controllerContext.RESTMapper,
+
+	client, err := clientset.NewForConfig(controllerContext.ClientBuilder.ConfigOrDie(names.ValidatingAdmissionPolicyStatusController))
+	if err != nil {
+		return nil, false, err
 	}
+	schemaWatcher := schemawatcher.NewOpenAPIv3Discovery(&schemawatcher.OpenAPIv3Root{
+		RESTClient: client.RESTClient(),
+	}, controllerContext.ComponentConfig.ValidatingAdmissionPolicyStatusController.SchemaPollInterval.Duration)
+
 	c, err := validatingadmissionpolicystatus.NewController(
 		controllerContext.InformerFactory.Admissionregistration().V1beta1().ValidatingAdmissionPolicies(),
 		controllerContext.ClientBuilder.ClientOrDie(names.ValidatingAdmissionPolicyStatusController).AdmissionregistrationV1beta1().ValidatingAdmissionPolicies(),
-		typeChecker,
+		controllerContext.RESTMapper,
+		schemaWatcher,
 	)
 
 	go c.Run(ctx, int(controllerContext.ComponentConfig.ValidatingAdmissionPolicyStatusController.ConcurrentPolicySyncs))

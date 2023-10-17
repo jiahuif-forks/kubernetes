@@ -17,6 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubectrlmgrconfigv1alpha1 "k8s.io/kube-controller-manager/config/v1alpha1"
 )
 
@@ -32,5 +35,9 @@ import (
 func RecommendedDefaultValidatingAdmissionPolicyStatusControllerConfiguration(obj *kubectrlmgrconfigv1alpha1.ValidatingAdmissionPolicyStatusControllerConfiguration) {
 	if obj.ConcurrentPolicySyncs == 0 {
 		obj.ConcurrentPolicySyncs = 5
+	}
+	var zero metav1.Duration
+	if obj.SchemaPollInterval == zero {
+		obj.SchemaPollInterval.Duration = 5 * time.Second
 	}
 }

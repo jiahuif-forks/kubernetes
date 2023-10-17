@@ -27,12 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/admission/plugin/validatingadmissionpolicy"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/kubernetes/pkg/generated/openapi"
+	"k8s.io/kubernetes/pkg/controller/validatingadmissionpolicystatus/schemawatcher"
 )
 
 func TestTypeChecking(t *testing.T) {
@@ -102,14 +100,11 @@ func TestTypeChecking(t *testing.T) {
 			policy.ObjectMeta.Generation = 1 // fake storage does not do this automatically
 			client := fake.NewSimpleClientset(policy)
 			informerFactory := informers.NewSharedInformerFactory(client, 0)
-			typeChecker := &validatingadmissionpolicy.TypeChecker{
-				SchemaResolver: resolver.NewDefinitionsSchemaResolver(scheme.Scheme, openapi.GetOpenAPIDefinitions),
-				RestMapper:     testrestmapper.TestOnlyStaticRESTMapper(scheme.Scheme),
-			}
 			controller, err := NewController(
 				informerFactory.Admissionregistration().V1beta1().ValidatingAdmissionPolicies(),
 				client.AdmissionregistrationV1beta1().ValidatingAdmissionPolicies(),
-				typeChecker,
+				testrestmapper.TestOnlyStaticRESTMapper(scheme.Scheme),
+				schemawatcher.NewOpenAPIv3Discovery(&schemawatcher.FakeRoot{}, time.Minute),
 			)
 			if err != nil {
 				t.Fatalf("cannot create controller: %v", err)

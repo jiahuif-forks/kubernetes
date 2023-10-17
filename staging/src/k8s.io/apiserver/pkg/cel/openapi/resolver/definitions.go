@@ -35,11 +35,11 @@ type DefinitionsSchemaResolver struct {
 
 // NewDefinitionsSchemaResolver creates a new DefinitionsSchemaResolver.
 // An example working setup:
-// scheme         = "k8s.io/client-go/kubernetes/scheme".Scheme
 // getDefinitions = "k8s.io/kubernetes/pkg/generated/openapi".GetOpenAPIDefinitions
-func NewDefinitionsSchemaResolver(scheme *runtime.Scheme, getDefinitions common.GetOpenAPIDefinitions) *DefinitionsSchemaResolver {
+// scheme         = "k8s.io/client-go/kubernetes/scheme".Scheme
+func NewDefinitionsSchemaResolver(getDefinitions common.GetOpenAPIDefinitions, schemes ...*runtime.Scheme) *DefinitionsSchemaResolver {
 	gvkToSchema := make(map[schema.GroupVersionKind]*spec.Schema)
-	namer := openapi.NewDefinitionNamer(scheme)
+	namer := openapi.NewDefinitionNamer(schemes...)
 	defs := getDefinitions(func(path string) spec.Ref {
 		return spec.MustCreateRef(path)
 	})
@@ -62,7 +62,7 @@ func (d *DefinitionsSchemaResolver) ResolveSchema(gvk schema.GroupVersionKind) (
 	if !ok {
 		return nil, fmt.Errorf("cannot resolve %v: %w", gvk, ErrSchemaNotFound)
 	}
-	s, err := populateRefs(func(ref string) (*spec.Schema, bool) {
+	s, err := PopulateRefs(func(ref string) (*spec.Schema, bool) {
 		// find the schema by the ref string, and return a deep copy
 		def, ok := d.defs[ref]
 		if !ok {

@@ -492,4 +492,11 @@ type ValidatingAdmissionPolicyStatusControllerConfiguration struct {
 	// but more CPU (and network) load.
 	// The default value is 5.
 	ConcurrentPolicySyncs int32
+
+	// SchemaPollInterval is the interval between two polls from the
+	// OpenAPI v3 discovery interface.
+	// Short interval causes quicker response to schema changes
+	// like an update to CRD but more CPU (and network) load.
+	// The default value is 5 seconds.
+	SchemaPollInterval metav1.Duration
 }

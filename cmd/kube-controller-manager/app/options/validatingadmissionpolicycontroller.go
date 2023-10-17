@@ -18,6 +18,7 @@ package options
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/pflag"
 
@@ -36,6 +37,7 @@ func (o *ValidatingAdmissionPolicyStatusControllerOptions) AddFlags(fs *pflag.Fl
 	}
 
 	fs.Int32Var(&o.ConcurrentPolicySyncs, "concurrent-validating-admission-policy-status-syncs", o.ConcurrentPolicySyncs, "The number of ValidatingAdmissionPolicyStatusController workers that are allowed to sync concurrently.")
+	fs.DurationVar(&o.SchemaPollInterval.Duration, "schema-poll-interval", o.SchemaPollInterval.Duration, "The interval between two polls from the OpenAPI v3 discovery endpoint.")
 }
 
 // ApplyTo fills up ValidatingAdmissionPolicyStatusController config with options.
@@ -45,6 +47,7 @@ func (o *ValidatingAdmissionPolicyStatusControllerOptions) ApplyTo(cfg *validati
 	}
 
 	cfg.ConcurrentPolicySyncs = o.ConcurrentPolicySyncs
+	cfg.SchemaPollInterval = o.SchemaPollInterval
 
 	return nil
 }
@@ -58,6 +61,9 @@ func (o *ValidatingAdmissionPolicyStatusControllerOptions) Validate() []error {
 	if o.ConcurrentPolicySyncs <= 0 {
 		// omits controller or flag names because the CLI already includes these in the message.
 		errs = append(errs, fmt.Errorf("must be positive, got %d", o.ConcurrentPolicySyncs))
+	}
+	if o.SchemaPollInterval.Duration < time.Second {
+		errs = append(errs, fmt.Errorf("duration time must be greater than one second as set via command line option schema-poll-interval"))
 	}
 	return errs
 }

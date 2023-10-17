@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"testing"
+	"time"
 
 	kubectrlmgrconfigv1alpha1 "k8s.io/kube-controller-manager/config/v1alpha1"
 )
@@ -27,5 +28,8 @@ func TestRecommendedDefaultValidatingAdmissionPolicyStatusControllerConfiguratio
 	RecommendedDefaultValidatingAdmissionPolicyStatusControllerConfiguration(config)
 	if config.ConcurrentPolicySyncs != 5 {
 		t.Errorf("incorrect default value, expected 5 but got %v", config.ConcurrentPolicySyncs)
+	}
+	if config.SchemaPollInterval.Duration != 5*time.Second {
+		t.Errorf("incorrect default value, expected 5 seconds but got %v", config.SchemaPollInterval.Duration)
 	}
 }
