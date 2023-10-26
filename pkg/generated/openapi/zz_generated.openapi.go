@@ -52975,10 +52975,18 @@ func schema_k8sio_kube_controller_manager_config_v1alpha1_ValidatingAdmissionPol
 							Format:      "int32",
 						},
 					},
+					"SchemaPollInterval": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SchemaPollInterval is the interval between two polls from the OpenAPI v3 discovery interface. Short interval causes quicker response to schema changes like an update to CRD but more CPU (and network) load. The default value is 5 seconds.",
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Duration"),
+						},
+					},
 				},
-				Required: []string{"ConcurrentPolicySyncs"},
+				Required: []string{"ConcurrentPolicySyncs", "SchemaPollInterval"},
 			},
 		},
+		Dependencies: []string{
+			"k8s.io/apimachinery/pkg/apis/meta/v1.Duration"},
 	}
 }
 

@@ -83,10 +83,12 @@ func Convert_v1_GroupResource_To_v1alpha1_GroupResource(in *v1.GroupResource, ou
 
 func autoConvert_v1alpha1_ValidatingAdmissionPolicyStatusControllerConfiguration_To_config_ValidatingAdmissionPolicyStatusControllerConfiguration(in *v1alpha1.ValidatingAdmissionPolicyStatusControllerConfiguration, out *config.ValidatingAdmissionPolicyStatusControllerConfiguration, s conversion.Scope) error {
 	out.ConcurrentPolicySyncs = in.ConcurrentPolicySyncs
+	out.SchemaPollInterval = in.SchemaPollInterval
 	return nil
 }
 
 func autoConvert_config_ValidatingAdmissionPolicyStatusControllerConfiguration_To_v1alpha1_ValidatingAdmissionPolicyStatusControllerConfiguration(in *config.ValidatingAdmissionPolicyStatusControllerConfiguration, out *v1alpha1.ValidatingAdmissionPolicyStatusControllerConfiguration, s conversion.Scope) error {
 	out.ConcurrentPolicySyncs = in.ConcurrentPolicySyncs
+	out.SchemaPollInterval = in.SchemaPollInterval
 	return nil
 }
