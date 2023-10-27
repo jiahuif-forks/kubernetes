@@ -57,7 +57,7 @@ func (r *ClientDiscoveryResolver) ResolveSchema(gvk schema.GroupVersionKind) (*s
 	if err != nil {
 		return nil, err
 	}
-	s, err = populateRefs(func(ref string) (*spec.Schema, bool) {
+	s, err = PopulateRefs(func(ref string) (*spec.Schema, bool) {
 		s, ok := resp.Components.Schemas[strings.TrimPrefix(ref, refPrefix)]
 		return s, ok
 	}, s)

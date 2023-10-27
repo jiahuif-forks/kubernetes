@@ -19,13 +19,35 @@ package resolver
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
-// populateRefs recursively replaces Refs in the schema with the referred one.
+// createUnstructuredSchema creates an unstructured schema in place of the referred in case of circular reference.
+func createUnstructuredSchema() *spec.Schema {
+	return &spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type:                 []string{"object"},
+			AdditionalProperties: &spec.SchemaOrBool{Allows: true},
+		},
+	}
+}
+
+// PopulateRefs recursively replaces Refs in the schema with the referred one.
 // schemaOf is the callback to find the corresponding schema by the ref.
 // This function will not mutate the original schema. If the schema needs to be
 // mutated, a copy will be returned, otherwise it returns the original schema.
+func PopulateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.Schema) (*spec.Schema, error) {
+	visitedRefs := sets.New[string]()
+	return populateRefs(func(ref string) (*spec.Schema, bool) {
+		if visitedRefs.Has(ref) {
+			return createUnstructuredSchema(), true
+		}
+		visitedRefs.Insert(ref)
+		return schemaOf(ref)
+	}, schema)
+}
+
 func populateRefs(schemaOf func(ref string) (*spec.Schema, bool), schema *spec.Schema) (*spec.Schema, error) {
 	result := *schema
 	changed := false
