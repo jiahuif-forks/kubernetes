@@ -37,18 +37,29 @@ import (
 	mutationunstructured "k8s.io/apiserver/pkg/cel/mutation/unstructured"
 )
 
+// compilePolicy compiles the policy into a PolicyEvaluator
+// any error is stored and delayed until invocation.
 func compilePolicy(policy *Policy) PolicyEvaluator {
 	// removal not yet supported
-	evaluator := &evaluator{policy: policy}
-	return evaluator.Invoke
+	e := &evaluator{policy: policy}
+	e.compiledEvaluator, e.err = e.compile(plugincel.OptionalVariableDeclarations{HasParams: e.hasParams()})
+	return e.Invoke
 }
 
 type evaluator struct {
 	policy *Policy
+
+	compiledEvaluator *compiledEvaluator
+	// err holds the error during the creation of compiledEvaluator
+	err error
 }
 
 type compiledEvaluator struct {
 	programs []cel.Program
+}
+
+func (e *evaluator) hasParams() bool {
+	return e.policy.Spec.ParamKind != nil
 }
 
 func (e *evaluator) compile(vars plugincel.OptionalVariableDeclarations) (*compiledEvaluator, error) {
@@ -81,7 +92,7 @@ func (e *evaluator) compile(vars plugincel.OptionalVariableDeclarations) (*compi
 }
 
 func (e *evaluator) Invoke(ctx context.Context, matchedResource schema.GroupVersionResource, versionedAttr *admission.VersionedAttributes, o admission.ObjectInterfaces, versionedParams runtime.Object, namespace *v1.Namespace, typeConverter managedfields.TypeConverter, runtimeCELCostBudget int64) (patch.Application, error) {
-	compiled, err := e.compile(plugincel.OptionalVariableDeclarations{HasParams: versionedParams != nil})
+	err := e.err
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +110,7 @@ func (e *evaluator) Invoke(ctx context.Context, matchedResource schema.GroupVers
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range compiled.programs {
+	for _, p := range e.compiledEvaluator.programs {
 		v, _, err := p.ContextEval(ctx, a)
 		if err != nil {
 			return nil, err
@@ -141,12 +152,13 @@ type activation struct {
 	// For the second mutation and afterward, this is the object after previous mutations.
 	object map[string]any
 
-	// oldObject is the oldObject of the incoming request, or nil if oldObject is not present
-	// in the incoming request.
+	// oldObject is the oldObject of the incoming request, or null if oldObject is not present
+	// in the incoming request, i.e. for CREATE requests.
+	// This is NOT the object before any mutation.
 	oldObject map[string]any
 
 	// params is the resolved params that is referred by the policy.
-	// It can be null if the policy does not refer to any params.
+	// It is null if the policy does not refer to any params.
 	params map[string]any
 }
 

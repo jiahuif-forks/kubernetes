@@ -85,7 +85,7 @@ func TestCompilation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := &evaluator{policy: tc.policy}
-			c, err := e.compile(plugincel.OptionalVariableDeclarations{})
+			c, err := e.compile(plugincel.OptionalVariableDeclarations{HasParams: e.hasParams()})
 			if err != nil {
 				if tc.expectedErr == "" {
 					t.Fatalf("unexpected error: %v", err)
